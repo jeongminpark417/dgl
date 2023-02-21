@@ -1603,6 +1603,9 @@ class DGLHeteroGraph(object):
 
     def get_node_storage(self, key, ntype=None):
         """Get storage object of node feature of type :attr:`ntype` and name :attr:`key`."""
+        print("ntype: ", ntype)
+        print("ntype out: ", self.get_ntype_id(ntype))
+        print("key: ", key)
         return self._node_frames[self.get_ntype_id(ntype)]._columns[key]
 
     def get_edge_storage(self, key, etype=None):
@@ -5484,6 +5487,12 @@ class DGLHeteroGraph(object):
         to
         """
         return self.to(F.cpu())
+    def pin_graph_memory_(self):
+        if not self._graph.is_pinned():
+            if F.device_type(self.device) != 'cpu':
+                raise DGLError("The graph structure must be on CPU to be pinned.")
+            self._graph.pin_memory_()
+        return self
 
     def pin_memory_(self):
         """Pin the graph structure and node/edge data to the page-locked memory for

@@ -1,4 +1,6 @@
 """DGL PyTorch DataLoaders"""
+import time
+
 from collections.abc import Mapping, Sequence
 from queue import Queue, Empty, Full
 import itertools
@@ -30,6 +32,8 @@ from .. import backend as F
 from ..distributed import DistGraph
 from ..multiprocessing import call_once_and_share
 
+import BAM_Util
+
 PYTORCH_VER = LooseVersion(torch.__version__)
 PYTHON_EXIT_STATUS = False
 def _set_python_exit_flag():
@@ -40,13 +44,16 @@ atexit.register(_set_python_exit_flag)
 prefetcher_timeout = int(os.environ.get('DGL_PREFETCHER_TIMEOUT', '30'))
 
 class _TensorizedDatasetIter(object):
-    def __init__(self, dataset, batch_size, drop_last, mapping_keys, shuffle):
+    def __init__(self, dataset, batch_size, drop_last, mapping_keys, shuffle, wb=False, wb_size=1):
         self.dataset = dataset
         self.batch_size = batch_size
         self.drop_last = drop_last
         self.mapping_keys = mapping_keys
         self.index = 0
         self.shuffle = shuffle
+        self.wb = wb
+        self.wb_size = wb_size
+        self.wb_counter = 0
 
     # For PyTorch Lightning compatibility
     def __iter__(self):
@@ -55,6 +62,11 @@ class _TensorizedDatasetIter(object):
     def _next_indices(self):
         num_items = self.dataset.shape[0]
         if self.index >= num_items:
+            if(self.wb):
+                if(self.wb_counter < self.wb_size):
+                    self.wb_counter += 1
+                    batch = self.dataset[0:1]
+                    return batch
             raise StopIteration
         end_idx = self.index + self.batch_size
         if end_idx > num_items:
@@ -62,6 +74,8 @@ class _TensorizedDatasetIter(object):
                 raise StopIteration
             end_idx = num_items
         batch = self.dataset[self.index:end_idx]
+       # print("end idx: ", end_idx)
+       # print("batch shape: ", (batch.shape))
         self.index += self.batch_size
 
         return batch
@@ -134,7 +148,9 @@ class TensorizedDataset(torch.utils.data.IterableDataset):
     """Custom Dataset wrapper that returns a minibatch as tensors or dicts of tensors.
     When the dataset is on the GPU, this significantly reduces the overhead.
     """
-    def __init__(self, indices, batch_size, drop_last, shuffle, use_shared_memory):
+    def __init__(self, indices, batch_size, drop_last, shuffle, wb, wb_size, use_shared_memory):
+        self.wb = wb
+        self.wb_size = wb_size
         if isinstance(indices, Mapping):
             self._mapping_keys = list(indices.keys())
             self._device = next(iter(indices.values())).device
@@ -162,7 +178,7 @@ class TensorizedDataset(torch.utils.data.IterableDataset):
         indices = _divide_by_worker(self._indices, self.batch_size, self.drop_last)
         id_tensor = self._id_tensor[indices]
         return _TensorizedDatasetIter(
-            id_tensor, self.batch_size, self.drop_last, self._mapping_keys, self._shuffle)
+            id_tensor, self.batch_size, self.drop_last, self._mapping_keys, self._shuffle, self.wb, self.wb_size)
 
     def __len__(self):
         num_samples = self._id_tensor.shape[0]
@@ -260,6 +276,11 @@ def _prefetch_update_feats(feats, frames, types, get_storage_func, id_name, devi
                         'and the graph does not have dgl.NID or dgl.EID columns')
                 feats[tid, key] = get_storage_func(parent_key, type_).fetch(
                     column.id_ or default_id, device, pin_prefetcher)
+                #print("stoart obj: ", get_storage_func(parent_key, type_))
+                #print("coulmn id: ", column.id_)
+                #print("tid: ", tid, "key: ", key)
+                #print("tensor type: ", (feats[tid, key]).__class__)
+
 
 
 # This class exists to avoid recursion into the feature dictionary returned by the
@@ -438,7 +459,9 @@ def restore_parent_storage_columns(item, g):
 
 
 class _PrefetchingIter(object):
-    def __init__(self, dataloader, dataloader_it, num_threads=None):
+    def __init__(self, dataloader, dataloader_it, num_threads=None, bam=False, bam_loader=None):
+        self.bam = bam
+        self.bam_loader = bam_loader
         self.queue = Queue(1)
         self.dataloader_it = dataloader_it
         self.dataloader = dataloader
@@ -509,7 +532,52 @@ class _PrefetchingIter(object):
             exception.reraise()
         return batch, feats, stream_event
 
+    def _next_bam(self):
+        grav_t = 0.0 
+        graph_trav_start = time.time()
+        if(self.dataloader.window_buffer):
+            dl = self.dataloader
+            if(dl.wb_init == False):
+                for i in range(dl.wb_size+1):
+                    cur_it = self.dataloader_it  
+     
+                    graph_trav_start = time.time()
+                    batch = next(cur_it)
+                    grav_t += time.time() - graph_trav_start
+
+                    dl.wb.append(batch)
+                batch = dl.wb.pop(0) 
+                dl.wb_init = True
+                self.bam_loader.window_buffer(batch, dl.wb)
+            else:
+                cur_it = self.dataloader_it  
+
+                graph_trav_start = time.time()
+                new_batch = next(cur_it)
+                grav_t += time.time() - graph_trav_start
+
+                dl.wb.append(new_batch)
+                batch = dl.wb.pop(0)
+                self.bam_loader.window_buffer(batch, dl.wb)
+        else:
+            cur_it = self.dataloader_it
+            graph_trav_start = time.time()
+            batch = next(cur_it)
+            grav_t += time.time() - graph_trav_start
+
+        self.dataloader.graph_travel_time += grav_t
+        g_index = batch[0].to('cuda:0')
+        sample_start = time.time()
+        ret_ten = self.bam_loader.fetch_feature(g_index, 1024)
+        self.dataloader.sample_time = self.dataloader.sample_time + (time.time() - sample_start)
+        batch[2][0].srcdata['feat'] = ret_ten.to(self.device)
+        return batch
+
     def __next__(self):
+        if(self.bam):
+            batch = self._next_bam()
+            return batch
+
         batch, feats, stream_event = \
             self._next_non_threaded() if not self.use_thread else self._next_threaded()
         batch = recursive_apply_pair(batch, feats, _assign_for)
@@ -523,11 +591,12 @@ class CollateWrapper(object):
     """Wraps a collate function with :func:`remove_parent_storage_columns` for serializing
     from PyTorch DataLoader workers.
     """
-    def __init__(self, sample_func, g, use_uva, device):
+    def __init__(self, sample_func, g, use_uva, use_uva_graph, device):
         self.sample_func = sample_func
         self.g = g
         self.use_uva = use_uva
         self.device = device
+        self.use_uva_graph = use_uva_graph
 
     def __call__(self, items):
         graph_device = getattr(self.g, 'device', None)
@@ -535,6 +604,7 @@ class CollateWrapper(object):
             # Only copy the indices to the given device if in UVA mode or the graph
             # is not on CPU.
             items = recursive_apply(items, lambda x: x.to(self.device))
+        
         batch = self.sample_func(self.g, items)
         return recursive_apply(batch, remove_parent_storage_columns, self.g)
 
@@ -553,7 +623,7 @@ class WorkerInitWrapper(object):
 
 
 def create_tensorized_dataset(indices, batch_size, drop_last, use_ddp, ddp_seed,
-                              shuffle, use_shared_memory):
+                              shuffle, wb, wb_size, use_shared_memory):
     """Converts a given indices tensor to a TensorizedDataset, an IterableDataset
     that returns views of the original tensor, to reduce overhead from having
     a list of scalar tensors in default PyTorch DataLoader implementation.
@@ -562,7 +632,7 @@ def create_tensorized_dataset(indices, batch_size, drop_last, use_ddp, ddp_seed,
         # DDP always uses shared memory
         return DDPTensorizedDataset(indices, batch_size, drop_last, ddp_seed, shuffle)
     else:
-        return TensorizedDataset(indices, batch_size, drop_last, shuffle, use_shared_memory)
+        return TensorizedDataset(indices, batch_size, drop_last, shuffle, wb, wb_size, use_shared_memory)
 
 
 def _get_device(device):
@@ -696,10 +766,37 @@ class DataLoader(torch.utils.data.DataLoader):
 
       - Otherwise, both the sampling and subgraph construction will take place on the CPU.
     """
+    def print_stats(self):
+        self.bam_loader.print_stats()
+
+    def print_timer(self):
+        print("sample time: %f" % self.sample_time)
+        print("graph travel time: %f" % self.graph_travel_time)
+        self.sample_time = 0.0
+        self.graph_travel_time = 0.0
+
+    def bam_init(self, offset, page_size, cache_size):
+        self.bam_loader = BAM_Util.BAM_Util(page_size, offset, cache_size)
+
     def __init__(self, graph, indices, graph_sampler, device=None, use_ddp=False,
                  ddp_seed=0, batch_size=1, drop_last=False, shuffle=False,
                  use_prefetch_thread=None, use_alternate_streams=None,
-                 pin_prefetcher=None, use_uva=False, **kwargs):
+                 pin_prefetcher=None, use_uva=False,
+                 bam=False, use_uva_graph=False, window_buffer=False, window_buffer_size = 6,
+                 **kwargs):
+
+        self.bam = bam
+        self.window_buffer = window_buffer
+        self.bam_loader = None
+        self.sample_time = 0.0
+        self.graph_travel_time = 0.0
+        self.use_uva_graph = use_uva_graph 
+
+        if(window_buffer):
+            self.wb=[]
+            self.wb_size = window_buffer_size
+            self.wb_init = False
+
         # (BarclayII) PyTorch Lightning sometimes will recreate a DataLoader from an existing
         # DataLoader with modifications to the original arguments.  The arguments are retrieved
         # from the attributes with the same name, and because we change certain arguments
@@ -786,6 +883,10 @@ class DataLoader(torch.utils.data.DataLoader):
                 # will need to do that themselves.
                 self.graph.create_formats_()
                 self.graph.pin_memory_()
+            elif use_uva_graph:
+                self.graph.create_formats_()
+                self.graph.pin_graph_memory_()
+
             else:
                 if self.graph.device != indices_device:
                     raise ValueError(
@@ -829,6 +930,7 @@ class DataLoader(torch.utils.data.DataLoader):
                 all(torch.is_tensor(v) for v in indices.values()))):
             self.dataset = create_tensorized_dataset(
                 indices, batch_size, drop_last, use_ddp, ddp_seed, shuffle,
+                window_buffer, window_buffer_size,
                 kwargs.get('persistent_workers', False))
         else:
             self.dataset = indices
@@ -851,7 +953,7 @@ class DataLoader(torch.utils.data.DataLoader):
         super().__init__(
             self.dataset,
             collate_fn=CollateWrapper(
-                self.graph_sampler.sample, graph, self.use_uva, self.device),
+                self.graph_sampler.sample, graph, self.use_uva, self.use_uva_graph, self.device),
             batch_size=None,
             pin_memory=self.pin_prefetcher,
             worker_init_fn=worker_init_fn,
@@ -868,7 +970,7 @@ class DataLoader(torch.utils.data.DataLoader):
         # When using multiprocessing PyTorch sometimes set the number of PyTorch threads to 1
         # when spawning new Python threads.  This drastically slows down pinning features.
         num_threads = torch.get_num_threads() if self.num_workers > 0 else None
-        return _PrefetchingIter(self, super().__iter__(), num_threads=num_threads)
+        return _PrefetchingIter(self, super().__iter__(), num_threads=num_threads,bam=self.bam, bam_loader=self.bam_loader)
 
     @contextmanager
     def enable_cpu_affinity(self, loader_cores=None, compute_cores=None, verbose=True):
