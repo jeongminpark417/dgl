@@ -514,9 +514,13 @@ class _PrefetchingIter(object):
             self._shutdown()
 
     def _next_non_threaded(self):
+        graph_time_start = time.time()
         batch = next(self.dataloader_it)
         batch = recursive_apply(batch, restore_parent_storage_columns, self.dataloader.graph)
+        self.dataloader.graph_travel_time = self.dataloader.graph_travel_time + (time.time() - graph_time_start)
+        sample_start = time.time()
         batch, feats, stream_event = _prefetch(batch, self.dataloader, self.stream)
+        self.dataloader.sample_time = self.dataloader.sample_time + (time.time() - sample_start)
         return batch, feats, stream_event
 
     def _next_threaded(self):
@@ -564,26 +568,26 @@ class _PrefetchingIter(object):
             graph_trav_start = time.time()
             batch = next(cur_it)
             grav_t += time.time() - graph_trav_start
-
         self.dataloader.graph_travel_time += grav_t
         g_index = batch[0].to('cuda:0')
         sample_start = time.time()
         ret_ten = self.bam_loader.fetch_feature(g_index, 1024)
         self.dataloader.sample_time = self.dataloader.sample_time + (time.time() - sample_start)
-        batch[2][0].srcdata['feat'] = ret_ten.to(self.device)
-        return batch
+       # batch[2][0].srcdata['feat'] = ret_ten.to(self.device)
+       # batch[2][0].srcdata['feat'] = ret_ten
+        return (batch, ret_ten)
 
     def __next__(self):
         if(self.bam):
-            batch = self._next_bam()
-            return batch
+            batch,ret = self._next_bam()
+            return (batch, ret)
 
         batch, feats, stream_event = \
             self._next_non_threaded() if not self.use_thread else self._next_threaded()
         batch = recursive_apply_pair(batch, feats, _assign_for)
         if stream_event is not None:
             stream_event.wait()
-        return batch
+        return (batch, None)
 
 
 # Make them classes to work with pickling in mp.spawn
@@ -600,7 +604,7 @@ class CollateWrapper(object):
 
     def __call__(self, items):
         graph_device = getattr(self.g, 'device', None)
-        if self.use_uva or (graph_device != torch.device('cpu')):
+        if self.use_uva or (graph_device != torch.device('cpu')) or self.use_uva_graph:
             # Only copy the indices to the given device if in UVA mode or the graph
             # is not on CPU.
             items = recursive_apply(items, lambda x: x.to(self.device))
@@ -866,6 +870,8 @@ class DataLoader(torch.utils.data.DataLoader):
         if device is None:
             if use_uva:
                 device = torch.cuda.current_device()
+            elif use_uva_graph:
+                device = torch.cuda.current_device()
             else:
                 device = self.graph.device
         self.device = _get_device(device)
@@ -883,10 +889,11 @@ class DataLoader(torch.utils.data.DataLoader):
                 # will need to do that themselves.
                 self.graph.create_formats_()
                 self.graph.pin_memory_()
+            
             elif use_uva_graph:
                 self.graph.create_formats_()
                 self.graph.pin_graph_memory_()
-
+                #self.graph.pin_memory_()
             else:
                 if self.graph.device != indices_device:
                     raise ValueError(
