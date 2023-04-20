@@ -8,6 +8,7 @@ from .. import ndarray as nd
 from .. import utils
 from .utils import EidExcluder
 
+import time
 __all__ = [
     'sample_etype_neighbors',
     'sample_neighbors',

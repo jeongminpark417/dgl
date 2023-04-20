@@ -546,7 +546,7 @@ CSRMatrix CSRRemove(CSRMatrix csr, IdArray entries) {
 
 COOMatrix CSRRowWiseSampling(
     CSRMatrix mat, IdArray rows, int64_t num_samples, FloatArray prob, bool replace) {
-  COOMatrix ret;
+	COOMatrix ret;
   if (IsNullArray(prob)) {
     ATEN_CSR_SWITCH_CUDA_UVA(mat, rows, XPU, IdType, "CSRRowWiseSamplingUniform", {
       ret = impl::CSRRowWiseSamplingUniform<XPU, IdType>(mat, rows, num_samples, replace);

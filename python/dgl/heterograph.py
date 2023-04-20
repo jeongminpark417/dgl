@@ -1603,9 +1603,6 @@ class DGLHeteroGraph(object):
 
     def get_node_storage(self, key, ntype=None):
         """Get storage object of node feature of type :attr:`ntype` and name :attr:`key`."""
-        print("ntype: ", ntype)
-        print("ntype out: ", self.get_ntype_id(ntype))
-        print("key: ", key)
         return self._node_frames[self.get_ntype_id(ntype)]._columns[key]
 
     def get_edge_storage(self, key, etype=None):

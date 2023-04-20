@@ -544,15 +544,15 @@ class _PrefetchingIter(object):
             if(dl.wb_init == False):
                 for i in range(dl.wb_size+1):
                     cur_it = self.dataloader_it  
-     
                     graph_trav_start = time.time()
                     batch = next(cur_it)
                     grav_t += time.time() - graph_trav_start
-
+                    self.bam_loader.window_buffer2(batch, dl.wb)
+                    print("batch: ", batch)
                     dl.wb.append(batch)
                 batch = dl.wb.pop(0) 
                 dl.wb_init = True
-                self.bam_loader.window_buffer(batch, dl.wb)
+                #self.bam_loader.window_buffer(batch, dl.wb)
             else:
                 cur_it = self.dataloader_it  
 
@@ -562,32 +562,64 @@ class _PrefetchingIter(object):
 
                 dl.wb.append(new_batch)
                 batch = dl.wb.pop(0)
-                self.bam_loader.window_buffer(batch, dl.wb)
+                self.bam_loader.window_buffer2(new_batch, dl.wb)
+                #self.bam_loader.window_buffer(batch, dl.wb)
         else:
             cur_it = self.dataloader_it
             graph_trav_start = time.time()
             batch = next(cur_it)
             grav_t += time.time() - graph_trav_start
         self.dataloader.graph_travel_time += grav_t
+        if(type(batch[0]) is dict):
+            #print("dict is true")
+            ret_ten = {}
+            for k,v in batch[0].items():
+                if(len(v) == 0):
+                    empty_t = torch.empty((0,self.dataloader.dim)).to('cuda:0')
+                    ret_ten[k] = empty_t
+                else:
+                    g_index = v.to('cuda:0')
+                    ret_t = self.bam_loader.fetch_feature(g_index, self.dataloader.dim)
+                    ret_ten[k] = ret_t
+            #print("ret ten: ", ret_ten)
+            batch.append(ret_ten)
+            return batch
+
         g_index = batch[0].to('cuda:0')
         sample_start = time.time()
-        ret_ten = self.bam_loader.fetch_feature(g_index, 1024)
+        ret_ten = self.bam_loader.fetch_feature(g_index, self.dataloader.dim)
         self.dataloader.sample_time = self.dataloader.sample_time + (time.time() - sample_start)
        # batch[2][0].srcdata['feat'] = ret_ten.to(self.device)
        # batch[2][0].srcdata['feat'] = ret_ten
-        return (batch, ret_ten)
+        batch.append(ret_ten) 
+        return batch
+
+    def graph_next(self):
+        graph_trav_start = time.time()
+        batch = next(self.dataloader_it)
+        grav_t = time.time() - graph_trav_start
+#        print("minibatch dample time: ", grav_t)
+        self.dataloader.graph_travel_time += grav_t
+        return batch
+
 
     def __next__(self):
+
+        if(self.dataloader.graph_test):
+            batch = self.graph_next()
+            return batch
+
         if(self.bam):
-            batch,ret = self._next_bam()
-            return (batch, ret)
+            batch = self._next_bam()
+            return batch
 
         batch, feats, stream_event = \
             self._next_non_threaded() if not self.use_thread else self._next_threaded()
         batch = recursive_apply_pair(batch, feats, _assign_for)
         if stream_event is not None:
             stream_event.wait()
-        return (batch, None)
+        batch.append([])
+        return batch
 
 
 # Make them classes to work with pickling in mp.spawn
@@ -779,14 +811,18 @@ class DataLoader(torch.utils.data.DataLoader):
         self.sample_time = 0.0
         self.graph_travel_time = 0.0
 
-    def bam_init(self, offset, page_size, cache_size):
-        self.bam_loader = BAM_Util.BAM_Util(page_size, offset, cache_size)
+    def pin_pages(self, index, dim):
+        self.bam_loader.pin_pages(index, dim)
+    def bam_init(self, offset, page_size, cache_dim, num_ele, cache_size, num_ssd):
+        self.bam_loader = BAM_Util.BAM_Util(page_size, offset, cache_dim, num_ele, num_ssd, cache_size, False, 0)
 
     def __init__(self, graph, indices, graph_sampler, device=None, use_ddp=False,
                  ddp_seed=0, batch_size=1, drop_last=False, shuffle=False,
                  use_prefetch_thread=None, use_alternate_streams=None,
                  pin_prefetcher=None, use_uva=False,
+                 feature_dim = 128,
                  bam=False, use_uva_graph=False, window_buffer=False, window_buffer_size = 6,
+                 graph_test=False,
                  **kwargs):
 
         self.bam = bam
@@ -795,6 +831,8 @@ class DataLoader(torch.utils.data.DataLoader):
         self.sample_time = 0.0
         self.graph_travel_time = 0.0
         self.use_uva_graph = use_uva_graph 
+        self.dim = feature_dim
+        self.graph_test = graph_test
 
         if(window_buffer):
             self.wb=[]

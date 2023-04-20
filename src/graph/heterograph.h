@@ -189,8 +189,20 @@ class HeteroGraph : public BaseHeteroGraph {
   }
 
   aten::CSRMatrix GetCSCMatrix(dgl_type_t etype) const override {
-    return GetRelationGraph(etype)->GetCSCMatrix(0);
-  }
+    return  GetRelationGraph(etype)->GetCSCMatrix(0);
+ 
+/*
+	HeteroGraphPtr ret = GetRelationGraph(etype);
+	printf("CSC matrix2\n");
+        std::cin.ignore();
+    printf("CSC matrix start2\n");
+     aten::CSRMatrix final_ret =  ret -> GetCSCMatrix(0);
+     printf("get csc done\n");
+     std::cin.ignore();
+     printf("get csc done and restart\n");
+     return final_ret;
+	*/
+     }
 
   aten::CSRMatrix GetCSRMatrix(dgl_type_t etype) const override {
     return GetRelationGraph(etype)->GetCSRMatrix(0);

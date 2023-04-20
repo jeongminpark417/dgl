@@ -125,15 +125,16 @@ HeteroSubgraph SampleNeighbors(
           }
           break;
         case SparseFormat::kCSR:
-          CHECK(dir == EdgeDir::kOut) << "Cannot sample out edges on CSC matrix.";
+	  CHECK(dir == EdgeDir::kOut) << "Cannot sample out edges on CSC matrix.";
           sampled_coo = aten::CSRRowWiseSampling(
             hg->GetCSRMatrix(etype), nodes_ntype, fanouts[etype], prob[etype], replace);
           break;
         case SparseFormat::kCSC:
           CHECK(dir == EdgeDir::kIn) << "Cannot sample in edges on CSR matrix.";
-          sampled_coo = aten::CSRRowWiseSampling(
+
+	  sampled_coo = aten::CSRRowWiseSampling(
             hg->GetCSCMatrix(etype), nodes_ntype, fanouts[etype], prob[etype], replace);
-          sampled_coo = aten::COOTranspose(sampled_coo);
+       	  sampled_coo = aten::COOTranspose(sampled_coo);
           break;
         default:
           LOG(FATAL) << "Unsupported sparse format.";

@@ -155,7 +155,7 @@ template COOMatrix CSRRowWisePerEtypeSampling<kDGLCPU, int64_t, double>(
 template <DGLDeviceType XPU, typename IdxType>
 COOMatrix CSRRowWiseSamplingUniform(CSRMatrix mat, IdArray rows,
                                     int64_t num_samples, bool replace) {
-  auto pick_fn = GetSamplingUniformPickFn<IdxType>(num_samples, replace);
+	auto pick_fn = GetSamplingUniformPickFn<IdxType>(num_samples, replace);
   return CSRRowWisePick(mat, rows, num_samples, replace, pick_fn);
 }
 

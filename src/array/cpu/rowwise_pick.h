@@ -72,7 +72,7 @@ using RangePickFn = std::function<void(
 // OpenMP parallelization on rows because each row performs computation independently.
 template <typename IdxType>
 COOMatrix CSRRowWisePick(CSRMatrix mat, IdArray rows,
-                         int64_t num_picks, bool replace, PickFn<IdxType> pick_fn) {
+		int64_t num_picks, bool replace, PickFn<IdxType> pick_fn) {
   using namespace aten;
   const IdxType* indptr = static_cast<IdxType*>(mat.indptr->data);
   const IdxType* indices = static_cast<IdxType*>(mat.indices->data);

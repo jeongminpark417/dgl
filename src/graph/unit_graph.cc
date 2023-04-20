@@ -354,7 +354,7 @@ class UnitGraph::COO : public BaseHeteroGraph {
   }
 
   aten::CSRMatrix GetCSCMatrix(dgl_type_t etype) const override {
-    LOG(FATAL) << "Not enabled for COO graph";
+	  LOG(FATAL) << "Not enabled for COO graph";
     return aten::CSRMatrix();
   }
 
@@ -780,7 +780,7 @@ class UnitGraph::CSR : public BaseHeteroGraph {
   }
 
   aten::CSRMatrix GetCSCMatrix(dgl_type_t etype) const override {
-    LOG(FATAL) << "Not enabled for CSR graph";
+	 LOG(FATAL) << "Not enabled for CSR graph";
     return aten::CSRMatrix();
   }
 
@@ -1406,8 +1406,8 @@ UnitGraph::CSRPtr UnitGraph::GetInCSR(bool inplace) const {
   // TODO(BarclayII): need benchmarking.
   if (!in_csr_->defined()) {
     if (coo_->defined()) {
-      const auto& newadj = aten::COOToCSR(
-            aten::COOTranspose(coo_->adj()));
+	const auto& newadj = aten::COOToCSR(
+  	          aten::COOTranspose(coo_->adj()));
 
       if (inplace)
         *(const_cast<UnitGraph*>(this)->in_csr_) = CSR(meta_graph(), newadj);
@@ -1503,7 +1503,8 @@ UnitGraph::COOPtr UnitGraph::GetCOO(bool inplace) const {
 }
 
 aten::CSRMatrix UnitGraph::GetCSCMatrix(dgl_type_t etype) const {
-  return GetInCSR()->adj();
+	
+       	return GetInCSR()->adj();
 }
 
 aten::CSRMatrix UnitGraph::GetCSRMatrix(dgl_type_t etype) const {
