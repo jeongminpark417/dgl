@@ -32,7 +32,7 @@ from .. import backend as F
 from ..distributed import DistGraph
 from ..multiprocessing import call_once_and_share
 
-import BAM_Util
+import GIDS
 
 PYTORCH_VER = LooseVersion(torch.__version__)
 PYTHON_EXIT_STATUS = False
@@ -548,7 +548,6 @@ class _PrefetchingIter(object):
                     batch = next(cur_it)
                     grav_t += time.time() - graph_trav_start
                     self.bam_loader.window_buffer2(batch, dl.wb)
-                    print("batch: ", batch)
                     dl.wb.append(batch)
                 batch = dl.wb.pop(0) 
                 dl.wb_init = True
@@ -814,7 +813,7 @@ class DataLoader(torch.utils.data.DataLoader):
     def pin_pages(self, index, dim):
         self.bam_loader.pin_pages(index, dim)
     def bam_init(self, offset, page_size, cache_dim, num_ele, cache_size, num_ssd):
-        self.bam_loader = BAM_Util.BAM_Util(page_size, offset, cache_dim, num_ele, num_ssd, cache_size, False, 0)
+        self.bam_loader = GIDS.GIDS(page_size, offset, cache_dim, num_ele, num_ssd, cache_size, False, 0)
 
     def __init__(self, graph, indices, graph_sampler, device=None, use_ddp=False,
                  ddp_seed=0, batch_size=1, drop_last=False, shuffle=False,
