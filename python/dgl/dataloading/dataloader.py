@@ -32,7 +32,7 @@ from .. import backend as F
 from ..distributed import DistGraph
 from ..multiprocessing import call_once_and_share
 
-import GIDS
+import BAM_Util
 
 PYTORCH_VER = LooseVersion(torch.__version__)
 PYTHON_EXIT_STATUS = False
@@ -805,7 +805,8 @@ class DataLoader(torch.utils.data.DataLoader):
         self.bam_loader.print_stats()
 
     def print_timer(self):
-        print("sample time: %f" % self.sample_time)
+        if(self.bam):
+             print("feature aggregation time: %f" % self.sample_time)
         print("graph travel time: %f" % self.graph_travel_time)
         self.sample_time = 0.0
         self.graph_travel_time = 0.0
@@ -813,7 +814,7 @@ class DataLoader(torch.utils.data.DataLoader):
     def pin_pages(self, index, dim):
         self.bam_loader.pin_pages(index, dim)
     def bam_init(self, offset, page_size, cache_dim, num_ele, cache_size, num_ssd):
-        self.bam_loader = GIDS.GIDS(page_size, offset, cache_dim, num_ele, num_ssd, cache_size, False, 0)
+        self.bam_loader = BAM_Util.BAM_Util(page_size, offset, cache_dim, num_ele, num_ssd, cache_size, False, 0)
 
     def __init__(self, graph, indices, graph_sampler, device=None, use_ddp=False,
                  ddp_seed=0, batch_size=1, drop_last=False, shuffle=False,
