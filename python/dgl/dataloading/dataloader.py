@@ -32,7 +32,7 @@ from .. import backend as F
 from ..distributed import DistGraph
 from ..multiprocessing import call_once_and_share
 
-import BAM_Util
+import GIDS
 
 PYTORCH_VER = LooseVersion(torch.__version__)
 PYTHON_EXIT_STATUS = False
@@ -517,7 +517,8 @@ class _PrefetchingIter(object):
         graph_time_start = time.time()
         batch = next(self.dataloader_it)
         batch = recursive_apply(batch, restore_parent_storage_columns, self.dataloader.graph)
-        self.dataloader.graph_travel_time = self.dataloader.graph_travel_time + (time.time() - graph_time_start)
+        gt = (time.time() - graph_time_start)
+        self.dataloader.graph_travel_time = self.dataloader.graph_travel_time + gt
         sample_start = time.time()
         batch, feats, stream_event = _prefetch(batch, self.dataloader, self.stream)
         self.dataloader.sample_time = self.dataloader.sample_time + (time.time() - sample_start)
@@ -578,13 +579,15 @@ class _PrefetchingIter(object):
                     ret_ten[k] = empty_t
                 else:
                     g_index = v.to('cuda:0')
+                    sample_start = time.time()
                     ret_t = self.bam_loader.fetch_feature(g_index, self.dataloader.dim)
+                    self.dataloader.sample_time = self.dataloader.sample_time + (time.time() - sample_start)
                     ret_ten[k] = ret_t
             #print("ret ten: ", ret_ten)
             batch.append(ret_ten)
             return batch
-
-        g_index = batch[0].to('cuda:0')
+        #g_index = batch[0].to('cuda:0')
+        g_index = batch[0].to(self.dataloader.gids_device)
         sample_start = time.time()
         ret_ten = self.bam_loader.fetch_feature(g_index, self.dataloader.dim)
         self.dataloader.sample_time = self.dataloader.sample_time + (time.time() - sample_start)
@@ -814,13 +817,19 @@ class DataLoader(torch.utils.data.DataLoader):
     def pin_pages(self, index, dim):
         self.bam_loader.pin_pages(index, dim)
     def bam_init(self, offset, page_size, cache_dim, num_ele, cache_size, num_ssd):
-        self.bam_loader = BAM_Util.BAM_Util(page_size, offset, cache_dim, num_ele, num_ssd, cache_size, False, 0)
+        self.bam_loader = GIDS.GIDS(page_size, offset, cache_dim, num_ele, num_ssd, cache_size, False, 0)
+
+    def dist_gids_init(self, offset, page_size, cache_dim, num_ele, cache_size, ctrl_idx):
+        self.bam_loader = GIDS.GIDS(page_size, offset, cache_dim, num_ele, 1, cache_size, False, 0, ddp=True, ctrl_idx=ctrl_idx)
+        gids_device='cuda:'+str(ctrl_idx)
+        self.gids_device=gids_device
 
     def __init__(self, graph, indices, graph_sampler, device=None, use_ddp=False,
                  ddp_seed=0, batch_size=1, drop_last=False, shuffle=False,
                  use_prefetch_thread=None, use_alternate_streams=None,
                  pin_prefetcher=None, use_uva=False,
                  feature_dim = 128,
+                 gids_device = 'cuda:0',
                  bam=False, use_uva_graph=False, window_buffer=False, window_buffer_size = 6,
                  graph_test=False,
                  **kwargs):
@@ -833,6 +842,8 @@ class DataLoader(torch.utils.data.DataLoader):
         self.use_uva_graph = use_uva_graph 
         self.dim = feature_dim
         self.graph_test = graph_test
+        self.gids_device=gids_device
+
 
         if(window_buffer):
             self.wb=[]

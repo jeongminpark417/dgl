@@ -20,6 +20,10 @@ from . import backend as F
 from .frame import Frame
 from .view import HeteroNodeView, HeteroNodeDataView, HeteroEdgeView, HeteroEdgeDataView
 
+import nvtx
+import torch.cuda.nvtx as t_nvtx
+
+
 __all__ = ['DGLHeteroGraph', 'combine_names']
 
 class DGLHeteroGraph(object):
@@ -4888,6 +4892,7 @@ class DGLHeteroGraph(object):
         """
         # Graph with one relation type
         if self._graph.number_of_etypes() == 1 or etype is not None:
+            
             etid = self.get_etype_id(etype)
             etype = self.canonical_etypes[etid]
             _, dtid = self._graph.metagraph.find_edge(etid)
