@@ -9,6 +9,8 @@ from .base import ALL, EID, NID, DGLError, dgl_warning, is_all
 from .frame import Frame
 from .udf import EdgeBatch, NodeBatch
 
+import torch.cuda.nvtx as t_nvtx
+import nvtx
 
 def is_builtin(func):
     """Return true if the function is a DGL builtin function."""
@@ -352,11 +354,13 @@ def invoke_gspmm(
     else:
         x = alldata[mfunc.target][mfunc.in_field]
         op = getattr(ops, "{}_{}".format(mfunc.name, rfunc.name))
+        
         if graph._graph.number_of_etypes() > 1 and not isinstance(x, tuple):
             if mfunc.name == "copy_u":
                 x = data_dict_to_list(graph, x, mfunc, "u")
             else:  # "copy_e"
                 x = data_dict_to_list(graph, x, mfunc, "e")
+        print("op: ", op)
         z = op(graph, x)
     return {rfunc.out_field: z}
 
@@ -388,6 +392,7 @@ def message_passing(g, mfunc, rfunc, afunc):
     ):
         # invoke fused message passing
         ndata = invoke_gspmm(g, mfunc, rfunc)
+
     else:
         # invoke message passing in two separate steps
         # message phase

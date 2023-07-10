@@ -8,6 +8,8 @@ from .... import function as fn
 from ....base import DGLError
 from ....utils import expand_as_pair, check_eq_shape, dgl_warning
 
+import nvtx
+import torch.cuda.nvtx as t_nvtx
 
 class SAGEConv(nn.Module):
     r"""GraphSAGE layer from `Inductive Representation Learning on
@@ -221,6 +223,7 @@ class SAGEConv(nn.Module):
 
             h_self = feat_dst
 
+            t_nvtx.range_push("SAGE1")
             # Handle the case of graphs without edges
             if graph.number_of_edges() == 0:
                 graph.dstdata['neigh'] = torch.zeros(
@@ -229,6 +232,8 @@ class SAGEConv(nn.Module):
             # Determine whether to apply linear transformation before message passing A(XW)
             lin_before_mp = self._in_src_feats > self._out_feats
 
+            t_nvtx.range_pop()
+            
             # Message Passing
             if self._aggre_type == 'mean':
                 graph.srcdata['h'] = self.fc_neigh(feat_src) if lin_before_mp else feat_src

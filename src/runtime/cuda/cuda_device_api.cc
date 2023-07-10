@@ -126,7 +126,7 @@ class CUDADeviceAPI final : public DeviceAPI {
     if (td->IsAvailable())
       return td->CUDAFreeWorkspace(ptr);
 
-    CUDA_CALL(cudaFree(ptr));
+    CUDA_CALL(cudaFreeAsync(ptr, 0));
   }
 
   void CopyDataFromTo(const void* from,
