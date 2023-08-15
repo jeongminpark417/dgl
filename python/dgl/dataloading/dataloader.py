@@ -537,7 +537,7 @@ class _PrefetchingIter(object):
             exception.reraise()
         return batch, feats, stream_event
 
-    def _next_bam(self):
+    def _next_gids(self):
         grav_t = 0.0 
         graph_trav_start = time.time()
         if(self.dataloader.window_buffer):
@@ -604,15 +604,72 @@ class _PrefetchingIter(object):
         self.dataloader.graph_travel_time += grav_t
         return batch
 
+    def _next_gids_wb(self):
+        grav_t = 0.0 
+        graph_trav_start = time.time()
+
+        dl = self.dataloader
+        if(dl.wb_init == False):
+            for i in range(dl.wb_size):
+                cur_it = self.dataloader_it  
+                graph_trav_start = time.time()
+                batch = next(cur_it)
+                grav_t += time.time() - graph_trav_start
+                dl.wb.append(batch)
+            dl.wb_init = True
+
+        cur_it = self.dataloader_it 
+        graph_trav_start = time.time()
+        new_batch = next(cur_it)
+        grav_t += time.time() - graph_trav_start
+        dl.wb.append(new_batch)
+        batch = dl.wb.pop(0)
+        self.dataloader.graph_travel_time += grav_t
+        self.bam_loader.set_wb_counter(dl.wb)
+        
+        
+        if(type(batch[0]) is dict):
+            #print("dict is true")
+            ret_ten = {}
+            for k,v in batch[0].items():
+                if(len(v) == 0):
+                    empty_t = torch.empty((0,self.dataloader.dim)).to('cuda:0')
+                    ret_ten[k] = empty_t
+                else:
+                    g_index = v.to('cuda:0')
+                    sample_start = time.time()
+                    ret_t = self.bam_loader.fetch_feature(g_index, self.dataloader.dim)
+                    self.dataloader.sample_time = self.dataloader.sample_time + (time.time() - sample_start)
+                    ret_ten[k] = ret_t
+            #print("ret ten: ", ret_ten)
+            batch.append(ret_ten)
+            return batch
+
+        g_index = batch[0].to(self.dataloader.gids_device)
+        sample_start = time.time()
+        ret_ten = self.bam_loader.fetch_feature_with_wb(g_index, self.dataloader.dim)
+        self.dataloader.sample_time = self.dataloader.sample_time + (time.time() - sample_start)
+       
+        batch.append(ret_ten) 
+
+        self.bam_loader.update_time()
+
+        return batch
+
 
     def __next__(self):
-
+       
         if(self.dataloader.graph_test):
+            print("graph next")
             batch = self.graph_next()
             return batch
 
+        
         if(self.bam):
-            batch = self._next_bam()
+            if(self._next_gids_wb):
+                batch = self._next_gids_wb()
+            else:
+                batch = self._next_gids()
             return batch
 
         batch, feats, stream_event = \
@@ -804,18 +861,24 @@ class DataLoader(torch.utils.data.DataLoader):
 
       - Otherwise, both the sampling and subgraph construction will take place on the CPU.
     """
+    def get_GIDS(self):
+        return self.bam_loader
+
     def print_stats(self):
         self.bam_loader.print_stats()
 
     def print_timer(self):
         if(self.bam):
-             print("feature aggregation time: %f" % self.sample_time)
+             print("feature aggregation time test: %f" % self.sample_time)
         print("graph travel time: %f" % self.graph_travel_time)
         self.sample_time = 0.0
         self.graph_travel_time = 0.0
 
     def pin_pages(self, index, dim):
         self.bam_loader.pin_pages(index, dim)
+
+   
+
     def bam_init(self, offset, page_size, cache_dim, num_ele, cache_size, num_ssd):
         self.bam_loader = GIDS.GIDS(page_size, offset, cache_dim, num_ele, num_ssd, cache_size, False, 0)
 
@@ -844,7 +907,7 @@ class DataLoader(torch.utils.data.DataLoader):
         self.graph_test = graph_test
         self.gids_device=gids_device
 
-
+        print("DATA LOADER\n\n")
         if(window_buffer):
             self.wb=[]
             self.wb_size = window_buffer_size

@@ -360,7 +360,6 @@ def invoke_gspmm(
                 x = data_dict_to_list(graph, x, mfunc, "u")
             else:  # "copy_e"
                 x = data_dict_to_list(graph, x, mfunc, "e")
-        print("op: ", op)
         z = op(graph, x)
     return {rfunc.out_field: z}
 
