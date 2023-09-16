@@ -1,6 +1,6 @@
 """DGL PyTorch DataLoaders"""
 import time
-
+import gc
 from collections.abc import Mapping, Sequence
 from queue import Queue, Empty, Full
 import itertools
@@ -33,6 +33,7 @@ from ..distributed import DistGraph
 from ..multiprocessing import call_once_and_share
 
 import GIDS
+import nvtx
 
 PYTORCH_VER = LooseVersion(torch.__version__)
 PYTHON_EXIT_STATUS = False
@@ -604,13 +605,19 @@ class _PrefetchingIter(object):
         self.dataloader.graph_travel_time += grav_t
         return batch
 
+    @nvtx.annotate("graphs ample()", color="green")
+    def sample(self):
+        cur_it = self.dataloader_it
+        new_batch = next(cur_it)
+        return new_batch
+
     def _next_gids_wb(self):
         grav_t = 0.0 
         graph_trav_start = time.time()
 
         dl = self.dataloader
         if(dl.wb_init == False):
-            for i in range(dl.wb_size):
+            for i in range(dl.wb_size + 1):
                 cur_it = self.dataloader_it  
                 graph_trav_start = time.time()
                 batch = next(cur_it)
@@ -620,12 +627,13 @@ class _PrefetchingIter(object):
 
         cur_it = self.dataloader_it 
         graph_trav_start = time.time()
-        new_batch = next(cur_it)
+#        new_batch = next(cur_it)
+        new_batch = self.sample()
         grav_t += time.time() - graph_trav_start
         dl.wb.append(new_batch)
         batch = dl.wb.pop(0)
         self.dataloader.graph_travel_time += grav_t
-        self.bam_loader.set_wb_counter(dl.wb)
+       # self.bam_loader.set_wb_counter(dl.wb)
         
         
         if(type(batch[0]) is dict):
@@ -646,14 +654,19 @@ class _PrefetchingIter(object):
             return batch
 
         g_index = batch[0].to(self.dataloader.gids_device)
+        index_size = len(g_index)
+        
+        ret_ten = torch.zeros([index_size,self.dataloader.dim], dtype=torch.float, device=self.dataloader.gids_device)
+        
         sample_start = time.time()
-        ret_ten = self.bam_loader.fetch_feature_with_wb(g_index, self.dataloader.dim)
+        self.bam_loader.fetch_feature_with_wb(ret_ten, g_index, self.dataloader.dim)
         self.dataloader.sample_time = self.dataloader.sample_time + (time.time() - sample_start)
        
-        batch.append(ret_ten) 
-
-        self.bam_loader.update_time()
-
+       # self.bam_loader.update_time()
+        self.bam_loader.prefetch_from_victim_queue(0)
+        #self.bam_loader.set_wb_counter()
+        batch.append(ret_ten)
+       
         return batch
 
 
@@ -666,11 +679,11 @@ class _PrefetchingIter(object):
 
         
         if(self.bam):
-            if(self._next_gids_wb):
-                batch = self._next_gids_wb()
+            if(self.dataloader.window_buffer):
+                return  self._next_gids_wb()
             else:
-                batch = self._next_gids()
-            return batch
+                return  self._next_gids()
+            
 
         batch, feats, stream_event = \
             self._next_non_threaded() if not self.use_thread else self._next_threaded()
@@ -879,13 +892,27 @@ class DataLoader(torch.utils.data.DataLoader):
 
    
 
-    def bam_init(self, offset, page_size, cache_dim, num_ele, cache_size, num_ssd):
-        self.bam_loader = GIDS.GIDS(page_size, offset, cache_dim, num_ele, num_ssd, cache_size, False, 0)
+    def bam_init(self, offset, page_size, cache_dim, num_ele, cache_size, num_ssd, wb_queue_size, cpu_agg_flag=False, cpu_agg_q_size=0):
+        self.bam_loader = GIDS.GIDS(page_size, offset, cache_dim, num_ele, num_ssd, cache_size, self.wb_size, wb_queue_size, False, 0, cpu_agg=cpu_agg_flag, cpu_agg_queue_size=cpu_agg_q_size)
 
     def dist_gids_init(self, offset, page_size, cache_dim, num_ele, cache_size, ctrl_idx):
         self.bam_loader = GIDS.GIDS(page_size, offset, cache_dim, num_ele, 1, cache_size, False, 0, ddp=True, ctrl_idx=ctrl_idx)
         gids_device='cuda:'+str(ctrl_idx)
         self.gids_device=gids_device
+
+    def set_wb_counter(self, cpu_agg=False):
+        if(cpu_agg == False):
+            self.bam_loader.set_wb_counter(self.wb)
+        else:
+            self.bam_loader.set_wb_counter_list(self.wb)
+    
+#self.bam_loader.set_wb_counter(dl.wb)
+
+
+    def save_test_buf(self):
+#        x = torch.stack(self.test_buf)
+        x = self.test_buf
+        torch.save(x, 'test_buf.pt')
 
     def __init__(self, graph, indices, graph_sampler, device=None, use_ddp=False,
                  ddp_seed=0, batch_size=1, drop_last=False, shuffle=False,
@@ -893,7 +920,7 @@ class DataLoader(torch.utils.data.DataLoader):
                  pin_prefetcher=None, use_uva=False,
                  feature_dim = 128,
                  gids_device = 'cuda:0',
-                 bam=False, use_uva_graph=False, window_buffer=False, window_buffer_size = 6,
+                 bam=False, use_uva_graph=False, window_buffer=False, window_buffer_size = 6, 
                  graph_test=False,
                  **kwargs):
 
@@ -906,12 +933,13 @@ class DataLoader(torch.utils.data.DataLoader):
         self.dim = feature_dim
         self.graph_test = graph_test
         self.gids_device=gids_device
+        self.wb_size = window_buffer_size
 
-        print("DATA LOADER\n\n")
         if(window_buffer):
             self.wb=[]
             self.wb_size = window_buffer_size
             self.wb_init = False
+            self.test_buf=[]
 
         # (BarclayII) PyTorch Lightning sometimes will recreate a DataLoader from an existing
         # DataLoader with modifications to the original arguments.  The arguments are retrieved

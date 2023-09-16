@@ -127,6 +127,8 @@ class CUDADeviceAPI final : public DeviceAPI {
       return td->CUDAFreeWorkspace(ptr);
 
     CUDA_CALL(cudaFreeAsync(ptr, 0));
+
+    //CUDA_CALL(cudaFree(ptr));
   }
 
   void CopyDataFromTo(const void* from,
