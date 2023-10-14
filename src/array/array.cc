@@ -544,13 +544,32 @@ CSRMatrix CSRRemove(CSRMatrix csr, IdArray entries) {
   return ret;
 }
 
+//extern template struct BAM_Feature_Store<int64_t>;
+
+COOMatrix CSRRowWiseSamplingGIDS(
+    CSRMatrix mat, IdArray rows, int64_t num_samples, FloatArray prob, bool replace, bool GIDS_flag, uint64_t GIDS_ptr, uint64_t  GIDS_off) {
+        COOMatrix ret;
+//	 printf("CSR ROWWISE Sampling GIDS GIDS_off:%llu\n", GIDS_off);
+	void* gids_ptr = (void*) GIDS_ptr;
+	uint64_t* gids_off = (uint64_t*) GIDS_off;
+
+	ATEN_CSR_SWITCH_CUDA_UVA(mat, rows, XPU, IdType, "CSRRowWiseSamplingUniformGIDS", {
+      		ret = impl::CSRRowWiseSamplingUniformGIDS<XPU, IdType>(mat, rows, num_samples, replace, gids_ptr, gids_off);
+    	});
+	return ret;
+}
+
+
 COOMatrix CSRRowWiseSampling(
     CSRMatrix mat, IdArray rows, int64_t num_samples, FloatArray prob, bool replace) {
 	COOMatrix ret;
+	COOMatrix ret2;
   if (IsNullArray(prob)) {
     ATEN_CSR_SWITCH_CUDA_UVA(mat, rows, XPU, IdType, "CSRRowWiseSamplingUniform", {
       ret = impl::CSRRowWiseSamplingUniform<XPU, IdType>(mat, rows, num_samples, replace);
     });
+	
+
   } else {
     // prob is pinned and rows on GPU is valid
     CHECK_VALID_CONTEXT(prob, rows);

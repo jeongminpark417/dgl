@@ -9,6 +9,8 @@ from .. import utils
 from .utils import EidExcluder
 
 import time
+import GIDS
+
 __all__ = [
     'sample_etype_neighbors',
     'sample_neighbors',
@@ -152,7 +154,7 @@ DGLHeteroGraph.sample_etype_neighbors = utils.alias_func(sample_etype_neighbors)
 
 def sample_neighbors(g, nodes, fanout, edge_dir='in', prob=None, replace=False,
                      copy_ndata=True, copy_edata=True, _dist_training=False,
-                     exclude_edges=None, output_device=None):
+                     exclude_edges=None, output_device=None, GIDS_flag=False, GIDS=None):
     """Sample neighboring edges of the given nodes and return the induced subgraph.
 
     For each node, a number of inbound (or outbound when ``edge_dir == 'out'``) edges
@@ -289,6 +291,7 @@ def sample_neighbors(g, nodes, fanout, edge_dir='in', prob=None, replace=False,
     tensor([False, False, False])
 
     """
+
     if F.device_type(g.device) == 'cpu' and not g.is_pinned():
         frontier = _sample_neighbors(
             g, nodes, fanout, edge_dir=edge_dir, prob=prob, replace=replace,
@@ -296,7 +299,7 @@ def sample_neighbors(g, nodes, fanout, edge_dir='in', prob=None, replace=False,
     else:
         frontier = _sample_neighbors(
             g, nodes, fanout, edge_dir=edge_dir, prob=prob, replace=replace,
-            copy_ndata=copy_ndata, copy_edata=copy_edata)
+            copy_ndata=copy_ndata, copy_edata=copy_edata, GIDS_flag=GIDS_flag, GIDS=GIDS)
         if exclude_edges is not None:
             eid_excluder = EidExcluder(exclude_edges)
             frontier = eid_excluder(frontier)
@@ -304,7 +307,7 @@ def sample_neighbors(g, nodes, fanout, edge_dir='in', prob=None, replace=False,
 
 def _sample_neighbors(g, nodes, fanout, edge_dir='in', prob=None, replace=False,
                       copy_ndata=True, copy_edata=True, _dist_training=False,
-                      exclude_edges=None):
+                      exclude_edges=None, GIDS_flag=False, GIDS=None):
     if not isinstance(nodes, dict):
         if len(g.ntypes) > 1:
             raise DGLError("Must specify node type when the graph is not homogeneous.")
@@ -364,8 +367,10 @@ def _sample_neighbors(g, nodes, fanout, edge_dir='in', prob=None, replace=False,
             else:
                 excluded_edges_all_t.append(nd.array([], ctx=ctx))
 
-    subgidx = _CAPI_DGLSampleNeighbors(g._graph, nodes_all_types, fanout_array,
-                                       edge_dir, prob_arrays, excluded_edges_all_t, replace)
+    if(GIDS_flag):
+        subgidx = _CAPI_DGLSampleNeighbors(g._graph, nodes_all_types, fanout_array,edge_dir, prob_arrays, excluded_edges_all_t, replace, GIDS_flag, GIDS.get_array_ptr(), GIDS.get_offset_array())
+    else:
+         subgidx = _CAPI_DGLSampleNeighbors(g._graph, nodes_all_types, fanout_array, edge_dir, prob_arrays, excluded_edges_all_t, replace, GIDS_flag, 0, 0)
     induced_edges = subgidx.induced_edges
     ret = DGLHeteroGraph(subgidx.graph, g.ntypes, g.etypes)
 

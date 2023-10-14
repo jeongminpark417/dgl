@@ -538,6 +538,11 @@ class _PrefetchingIter(object):
             exception.reraise()
         return batch, feats, stream_event
 
+    def _next_gids2(self):
+        cur_it = self.dataloader_it
+        batch = self.bam_loader.fetch_feature(self.dataloader.dim, cur_it, self.dataloader.gids_device)
+        return batch
+
     def _next_gids(self):
         grav_t = 0.0 
         graph_trav_start = time.time()
@@ -570,6 +575,8 @@ class _PrefetchingIter(object):
             graph_trav_start = time.time()
             batch = next(cur_it)
             grav_t += time.time() - graph_trav_start
+        
+
         self.dataloader.graph_travel_time += grav_t
         if(type(batch[0]) is dict):
             #print("dict is true")
@@ -590,7 +597,7 @@ class _PrefetchingIter(object):
         #g_index = batch[0].to('cuda:0')
         g_index = batch[0].to(self.dataloader.gids_device)
         sample_start = time.time()
-        ret_ten = self.bam_loader.fetch_feature(g_index, self.dataloader.dim)
+        ret_ten = self.bam_loader.fetch_feature(g_index, self.dataloader.dim, cur_it)
         self.dataloader.sample_time = self.dataloader.sample_time + (time.time() - sample_start)
        # batch[2][0].srcdata['feat'] = ret_ten.to(self.device)
        # batch[2][0].srcdata['feat'] = ret_ten
@@ -671,18 +678,10 @@ class _PrefetchingIter(object):
 
 
     def __next__(self):
-       
-        if(self.dataloader.graph_test):
-            print("graph next")
-            batch = self.graph_next()
-            return batch
-
+      
         
         if(self.bam):
-            if(self.dataloader.window_buffer):
-                return  self._next_gids_wb()
-            else:
-                return  self._next_gids()
+            return  self._next_gids2()
             
 
         batch, feats, stream_event = \
@@ -921,20 +920,21 @@ class DataLoader(torch.utils.data.DataLoader):
                  feature_dim = 128,
                  gids_device = 'cuda:0',
                  bam=False, use_uva_graph=False, window_buffer=False, window_buffer_size = 6, 
-                 graph_test=False,
+                 graph_test=False, GIDS=None,
                  **kwargs):
 
         self.bam = bam
+        self.bam_loader = GIDS
         self.window_buffer = window_buffer
-        self.bam_loader = None
         self.sample_time = 0.0
         self.graph_travel_time = 0.0
         self.use_uva_graph = use_uva_graph 
         self.dim = feature_dim
         self.graph_test = graph_test
-        self.gids_device=gids_device
+        self.gids_device = gids_device
         self.wb_size = window_buffer_size
 
+        print("gids device: ", self.gids_device)
         if(window_buffer):
             self.wb=[]
             self.wb_size = window_buffer_size

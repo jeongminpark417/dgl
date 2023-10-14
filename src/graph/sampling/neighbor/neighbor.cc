@@ -69,7 +69,10 @@ HeteroSubgraph SampleNeighbors(
     EdgeDir dir,
     const std::vector<FloatArray>& prob,
     const std::vector<IdArray>& exclude_edges,
-    bool replace) {
+    bool replace,
+    bool GIDS_flag=false,
+    uint64_t GIDS_ptr=0,
+    uint64_t GIDS_off=0) {
 
   // sanity check
   CHECK_EQ(nodes.size(), hg->NumVertexTypes())
@@ -84,6 +87,7 @@ HeteroSubgraph SampleNeighbors(
   std::vector<HeteroGraphPtr> subrels(hg->NumEdgeTypes());
   std::vector<IdArray> induced_edges(hg->NumEdgeTypes());
   for (dgl_type_t etype = 0; etype < hg->NumEdgeTypes(); ++etype) {
+
     auto pair = hg->meta_graph()->FindEdge(etype);
     const dgl_type_t src_vtype = pair.first;
     const dgl_type_t dst_vtype = pair.second;
@@ -113,6 +117,7 @@ HeteroSubgraph SampleNeighbors(
       auto req_fmt = (dir == EdgeDir::kOut)? CSR_CODE : CSC_CODE;
       auto avail_fmt = hg->SelectFormat(etype, req_fmt);
       COOMatrix sampled_coo;
+      COOMatrix sampled_coo2;
       switch (avail_fmt) {
         case SparseFormat::kCOO:
           if (dir == EdgeDir::kIn) {
@@ -132,10 +137,19 @@ HeteroSubgraph SampleNeighbors(
         case SparseFormat::kCSC:
           CHECK(dir == EdgeDir::kIn) << "Cannot sample in edges on CSR matrix.";
 
-	  sampled_coo = aten::CSRRowWiseSampling(
-            hg->GetCSCMatrix(etype), nodes_ntype, fanouts[etype], prob[etype], replace);
-       	  sampled_coo = aten::COOTranspose(sampled_coo);
+	  if(GIDS_flag){
+	  	  sampled_coo  = aten::CSRRowWiseSamplingGIDS(
+            hg->GetCSCMatrix(etype), nodes_ntype, fanouts[etype], prob[etype], replace, GIDS_flag, GIDS_ptr, GIDS_off);
+	  }
+	  else{
+		sampled_coo = aten::CSRRowWiseSampling(
+          	hg->GetCSCMatrix(etype), nodes_ntype, fanouts[etype], prob[etype], replace);
+	  }
+	  sampled_coo = aten::COOTranspose(sampled_coo);
+  	  	  
+
           break;
+
         default:
           LOG(FATAL) << "Unsupported sparse format.";
       }
@@ -448,6 +462,10 @@ DGL_REGISTER_GLOBAL("sampling.neighbor._CAPI_DGLSampleNeighbors")
     const auto& prob = ListValueToVector<FloatArray>(args[4]);
     const auto& exclude_edges = ListValueToVector<IdArray>(args[5]);
     const bool replace = args[6];
+    const bool GIDS_flag = args[7];
+    const uint64_t GIDS_ptr = args[8];
+    const uint64_t GIDS_off = args[9];
+
 
     CHECK(dir_str == "in" || dir_str == "out")
       << "Invalid edge direction. Must be \"in\" or \"out\".";
@@ -455,7 +473,7 @@ DGL_REGISTER_GLOBAL("sampling.neighbor._CAPI_DGLSampleNeighbors")
 
     std::shared_ptr<HeteroSubgraph> subg(new HeteroSubgraph);
     *subg = sampling::SampleNeighbors(
-        hg.sptr(), nodes, fanouts, dir, prob, exclude_edges, replace);
+        hg.sptr(), nodes, fanouts, dir, prob, exclude_edges, replace, GIDS_flag, GIDS_ptr, GIDS_off);
 
     *rv = HeteroSubgraphRef(subg);
   });

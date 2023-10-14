@@ -11,10 +11,19 @@
 #include <vector>
 #include <tuple>
 #include <utility>
+#include <vector>
+
 
 namespace dgl {
 namespace aten {
 namespace impl {
+
+
+//GIDS
+template <DGLDeviceType XPU, typename IdType>
+COOMatrix CSRRowWiseSamplingUniformGIDS(
+    CSRMatrix mat, IdArray rows, int64_t num_samples, bool replace, void* gids_ptr, uint64_t* gids_off);
+
 
 template <DGLDeviceType XPU, typename IdType>
 IdArray Full(IdType val, int64_t length, DGLContext ctx);
@@ -163,6 +172,12 @@ CSRMatrix CSRRemove(CSRMatrix csr, IdArray entries);
 template <DGLDeviceType XPU, typename IdType, typename FloatType>
 COOMatrix CSRRowWiseSampling(
     CSRMatrix mat, IdArray rows, int64_t num_samples, FloatArray prob, bool replace);
+
+// FloatType is the type of probability data.
+
+template <DGLDeviceType XPU, typename IdType, typename FloatType>
+COOMatrix CSRRowWiseSamplingGIDS(
+    CSRMatrix mat, IdArray rows, int64_t num_samples, FloatArray prob, bool replace, bool GIDS_flag, uint64_t GIDS_ptr, uint64_t gids_offset);
 
 // FloatType is the type of probability data.
 template <DGLDeviceType XPU, typename IdType, typename FloatType>

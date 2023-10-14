@@ -428,12 +428,25 @@ CSRMatrix CSRRemove(CSRMatrix csr, IdArray entries);
  * \param replace True if sample with replacement
  * \return A COOMatrix storing the picked row, col and data indices.
  */
+COOMatrix CSRRowWiseSamplingGIDS(
+    CSRMatrix mat,
+    IdArray rows,
+    int64_t num_samples,
+    FloatArray prob = FloatArray(),
+    bool replace = true,
+    bool GIDS_flag = false,
+    uint64_t GIDS_ptr = 0,
+    uint64_t GIDS_off = 0
+    );
+
 COOMatrix CSRRowWiseSampling(
     CSRMatrix mat,
     IdArray rows,
     int64_t num_samples,
     FloatArray prob = FloatArray(),
-    bool replace = true);
+    bool replace = true
+    );
+
 
 /*!
  * \brief Randomly select a fixed number of non-zero entries for each edge type
@@ -593,7 +606,7 @@ COOMatrix CSRRowWiseSamplingBiased(
     NDArray tag_offset,
     FloatArray bias,
     bool replace = true
-);
+    );
 
 /*!
  * \brief Uniformly sample row-column pairs whose entries do not exist in the given

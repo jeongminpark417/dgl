@@ -6,6 +6,7 @@
 #include <dgl/random.h>
 #include <numeric>
 #include "./rowwise_pick.h"
+#include <vector>
 
 namespace dgl {
 namespace aten {
@@ -120,7 +121,7 @@ inline PickFn<IdxType> GetSamplingBiasedPickFn(
 template <DGLDeviceType XPU, typename IdxType, typename FloatType>
 COOMatrix CSRRowWiseSampling(CSRMatrix mat, IdArray rows, int64_t num_samples,
                              FloatArray prob, bool replace) {
-  CHECK(prob.defined());
+	CHECK(prob.defined());
   auto pick_fn = GetSamplingPickFn<IdxType, FloatType>(num_samples, prob, replace);
   return CSRRowWisePick(mat, rows, num_samples, replace, pick_fn);
 }
@@ -128,9 +129,9 @@ COOMatrix CSRRowWiseSampling(CSRMatrix mat, IdArray rows, int64_t num_samples,
 template COOMatrix CSRRowWiseSampling<kDGLCPU, int32_t, float>(
     CSRMatrix, IdArray, int64_t, FloatArray, bool);
 template COOMatrix CSRRowWiseSampling<kDGLCPU, int64_t, float>(
-    CSRMatrix, IdArray, int64_t, FloatArray, bool);
+    CSRMatrix, IdArray, int64_t, FloatArray, bool );
 template COOMatrix CSRRowWiseSampling<kDGLCPU, int32_t, double>(
-    CSRMatrix, IdArray, int64_t, FloatArray, bool);
+    CSRMatrix, IdArray, int64_t, FloatArray, bool );
 template COOMatrix CSRRowWiseSampling<kDGLCPU, int64_t, double>(
     CSRMatrix, IdArray, int64_t, FloatArray, bool);
 
@@ -163,6 +164,21 @@ template COOMatrix CSRRowWiseSamplingUniform<kDGLCPU, int32_t>(
     CSRMatrix, IdArray, int64_t, bool);
 template COOMatrix CSRRowWiseSamplingUniform<kDGLCPU, int64_t>(
     CSRMatrix, IdArray, int64_t, bool);
+
+///// GIDS
+template <DGLDeviceType XPU, typename IdxType>
+COOMatrix CSRRowWiseSamplingUniformGIDS(CSRMatrix mat, IdArray rows,
+                                    int64_t num_samples, bool replace, void* gids_ptr, uint64_t* gids_obj) {
+	auto pick_fn = GetSamplingUniformPickFn<IdxType>(num_samples, replace);
+  return CSRRowWisePick(mat, rows, num_samples, replace, pick_fn);
+}
+
+template COOMatrix CSRRowWiseSamplingUniformGIDS<kDGLCPU, int32_t>(
+    CSRMatrix, IdArray, int64_t, bool, void*, uint64_t* );
+template COOMatrix CSRRowWiseSamplingUniformGIDS<kDGLCPU, int64_t>(
+    CSRMatrix, IdArray, int64_t, bool, void*, uint64_t* );
+
+
 
 template <DGLDeviceType XPU, typename IdxType>
 COOMatrix CSRRowWisePerEtypeSamplingUniform(CSRMatrix mat, IdArray rows, IdArray etypes,

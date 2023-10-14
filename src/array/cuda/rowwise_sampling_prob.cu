@@ -422,7 +422,7 @@ COOMatrix CSRRowWiseSampling(CSRMatrix mat,
                              int64_t num_picks,
                              FloatArray prob,
                              bool replace) {
-  const auto& ctx = rows->ctx;
+	const auto& ctx = rows->ctx;
   auto device = runtime::DeviceAPI::Get(ctx);
   cudaStream_t stream = runtime::getCurrentCUDAStream();
 

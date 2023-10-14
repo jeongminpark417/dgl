@@ -13,6 +13,38 @@
 #include "../../array/cuda/atomic.cuh"
 #include "../../runtime/cuda/cuda_common.h"
 
+#include "../../bam/include/buffer.h"
+#include <cuda.h>
+#include <fcntl.h>
+#include "../../bam/include/nvm_admin.h"
+#include "../../bam/include/nvm_cmd.h"
+#include "../../bam/include/nvm_ctrl.h"
+#include "../../bam/include/nvm_error.h"
+#include "../../bam/include/nvm_io.h"
+#include "../../bam/include/nvm_parallel_queue.h"
+#include "../../bam/include/nvm_queue.h"
+#include "../../bam/include/nvm_types.h"
+#include "../../bam/include/nvm_util.h"
+
+#include "../../gids_module/include/bam_nvme.h"
+
+#include <stdio.h>
+
+#include <sys/mman.h>
+
+#include <unistd.h>
+#include "../../bam/include/util.h"
+
+#include "../../bam/include/ctrl.h"
+#include "../../bam/include/event.h"
+#include "../../bam/include/page_cache.h"
+#include "../../bam/include/queue.h"
+#include <stdio.h>
+
+#include <vector>
+
+//#include "../../bam/include/bam_nvme.h"
+
 
 using namespace dgl::aten::cuda;
 
@@ -35,14 +67,67 @@ constexpr int BLOCK_SIZE = 128;
 * @param out_deg The size of each row in the sampled matrix, as indexed by
 * `in_rows` (output).
 */
+
+
+//template<typename IdType>
+__global__ void GIDSTest(array_d_t<int64_t> *dr){
+	
+	if(blockIdx.x == 0 && threadIdx.x == 0){
+		printf("ptr: %p\n", dr);
+		bam_ptr<int64_t> ptr(dr);
+    for(int i  = 0; i < 10; i++){
+		  int64_t temp = ptr[i];
+		  printf("temp data: %llu \n", (unsigned long) temp);
+    }
+	}
+
+}
+
+/*
+  in_ptr = 0GB
+  in_index = 128G
+*/
+
 template<typename IdType>
-__global__ void _CSRRowWiseSampleDegreeKernel(
+__global__ void _CSRRowWiseSampleDegreeKernelGIDS2(
+    array_d_t<int64_t> *dr,
+    const int64_t num_picks,
+    const int64_t num_rows,
+    const IdType * const in_rows,
+    const IdType * const in_ptr,
+    IdType * const out_deg,
+    uint64_t gids_off) {
+  
+    const int tIdx = threadIdx.x + blockIdx.x * blockDim.x;
+    
+//    if(blockIdx.x == 0 && threadIdx.x == 0)
+ //     printf("size of Type: %llu\n", (unsigned long long) sizeof(IdType));
+		
+   // bam_ptr<int64_t> ptr(dr);
+
+    if (tIdx < num_rows) {
+      const int in_row = in_rows[tIdx];
+      const int out_row = tIdx;
+
+      //out_deg[out_row] = min(static_cast<IdType>(num_picks), (IdType) (in_ptr[(in_row + 1)] - in_ptr[(in_row) ]));
+	    out_deg[out_row] = min(static_cast<IdType>(num_picks), (IdType) ((*dr)[(in_row + 1 + gids_off)] - (*dr)[(in_row + gids_off) ]));
+
+      if (out_row == num_rows - 1) {
+        // make the prefixsum work
+        out_deg[num_rows] = 0;
+    }
+  }
+}
+
+template<typename IdType>
+__global__ void _CSRRowWiseSampleDegreeKernelGIDS(
     const int64_t num_picks,
     const int64_t num_rows,
     const IdType * const in_rows,
     const IdType * const in_ptr,
     IdType * const out_deg) {
   const int tIdx = threadIdx.x + blockIdx.x * blockDim.x;
+
 
   if (tIdx < num_rows) {
     const int in_row = in_rows[tIdx];
@@ -68,7 +153,7 @@ __global__ void _CSRRowWiseSampleDegreeKernel(
 * `in_rows` (output).
 */
 template<typename IdType>
-__global__ void _CSRRowWiseSampleDegreeReplaceKernel(
+__global__ void _CSRRowWiseSampleDegreeReplaceKernelGIDS(
     const int64_t num_picks,
     const int64_t num_rows,
     const IdType * const in_rows,
@@ -112,7 +197,8 @@ __global__ void _CSRRowWiseSampleDegreeReplaceKernel(
 * @param out_idxs The data array of the output COO (output).
 */
 template<typename IdType, int TILE_SIZE>
-__global__ void _CSRRowWiseSampleUniformKernel(
+__global__ void _CSRRowWiseSampleUniformKernelGIDS(
+    array_d_t<int64_t> *dr,
     const uint64_t rand_seed,
     const int64_t num_picks,
     const int64_t num_rows,
@@ -123,9 +209,20 @@ __global__ void _CSRRowWiseSampleUniformKernel(
     const IdType * const out_ptr,
     IdType * const out_rows,
     IdType * const out_cols,
-    IdType * const out_idxs) {
+    IdType * const out_idxs,
+    uint64_t in_ptr_off,
+    uint64_t index_off,
+    uint64_t data_off) {
   // we assign one warp per row
   assert(blockDim.x == BLOCK_SIZE);
+//  if(blockIdx.x == 0 && threadIdx.x == 0) {
+//     printf("ptr 0: %li ptr 1:%li ptr 2:%li ptr 3:%li ptr 4:%li \n",  in_ptr[0],  in_ptr[1], in_ptr[2],  in_ptr[3], in_ptr[4]);
+//     printf("Index ptr 0: %li ptr 1:%li ptr 2:%li ptr 3:%li ptr 4:%li \n",  in_index[0],  in_index[1], in_index[2],  in_index[3], in_index[4]);
+//     printf("Data ptr 0: %li ptr 1:%li ptr 2:%li ptr 3:%li ptr 4:%li \n",  data[0],  data[1], data[2],  data[3], data[4]);
+
+//   }
+
+  //if(threadIdx.x == 0 && blockIdx.x == 0) printf("GIDS Samplign Test Start\n");
 
   int64_t out_row = blockIdx.x * TILE_SIZE;
   const int64_t last_row = min(static_cast<int64_t>(blockIdx.x + 1) * TILE_SIZE, num_rows);
@@ -134,18 +231,40 @@ __global__ void _CSRRowWiseSampleUniformKernel(
   curand_init(rand_seed * gridDim.x + blockIdx.x, threadIdx.x, 0, &rng);
 
   while (out_row < last_row) {
+    // const int64_t row = in_rows[out_row];
+    // const int64_t in_row_start = in_ptr[row];    
+    // const int64_t deg = in_ptr[row + 1] - in_row_start;
+    // const int64_t out_row_start = out_ptr[out_row];
+
     const int64_t row = in_rows[out_row];
-    const int64_t in_row_start = in_ptr[row];
-    const int64_t deg = in_ptr[row + 1] - in_row_start;
+    const int64_t in_row_start = (*dr)[row+in_ptr_off];    
+    const int64_t deg = (*dr)[row + 1+in_ptr_off] - in_row_start;
     const int64_t out_row_start = out_ptr[out_row];
+
+    // int64_t gids_in_row_start = (*dr)[row+in_ptr_off];    
+    // int64_t gids_deg = (*dr)[row + 1+in_ptr_off] - in_row_start;
+
+    // if(gids_in_row_start != in_row_start) printf("Not same1 :%lld %lld\n", gids_in_row_start, in_row_start);
+    // if(gids_deg != deg) printf("Not same2 :%lld %lld\n", gids_deg, deg);
+
+
 
     if (deg <= num_picks) {
       // just copy row when there is not enough nodes to sample.
       for (int idx = threadIdx.x; idx < deg; idx += BLOCK_SIZE) {
         const IdType in_idx = in_row_start + idx;
         out_rows[out_row_start + idx] = row;
-        out_cols[out_row_start + idx] = in_index[in_idx];
-        out_idxs[out_row_start + idx] = data ? data[in_idx] : in_idx;
+        // out_cols[out_row_start + idx] = in_index[in_idx];
+        // out_idxs[out_row_start + idx] = data ? data[in_idx] : in_idx;
+
+        out_cols[out_row_start + idx] = (*dr)[index_off + in_idx];
+        out_idxs[out_row_start + idx] = data ? (*dr)[data_off + in_idx] : in_idx;
+
+
+        // if(in_index[in_idx] != (*dr)[index_off + in_idx]) printf("Not same3 :%lld %lld\n", in_index[in_idx] , (*dr)[index_off + in_idx]);
+        // int64_t test_data = data ? (*dr)[data_off + in_idx] : in_idx;
+        // if(test_data != out_idxs[out_row_start + idx]) printf("Not same 4\n");
+
       }
     } else {
       // generate permutation list via reservoir algorithm
@@ -168,8 +287,18 @@ __global__ void _CSRRowWiseSampleUniformKernel(
       for (int idx = threadIdx.x; idx < num_picks; idx += BLOCK_SIZE) {
         const IdType perm_idx = out_idxs[out_row_start + idx] + in_row_start;
         out_rows[out_row_start + idx] = row;
-        out_cols[out_row_start + idx] = in_index[perm_idx];
-        out_idxs[out_row_start + idx] = data ? data[perm_idx] : perm_idx;
+        // out_cols[out_row_start + idx] = in_index[perm_idx];
+        // out_idxs[out_row_start + idx] = data ? data[perm_idx] : perm_idx;
+
+        out_cols[out_row_start + idx] = (*dr)[perm_idx + index_off];
+        out_idxs[out_row_start + idx] = data ? (*dr)[data_off + perm_idx] : perm_idx;
+
+        // if(in_index[perm_idx] != (*dr)[perm_idx + index_off]) printf("Not same5 :%lld %lld\n", in_index[perm_idx] , (*dr)[perm_idx + index_off]);
+        // int64_t test_data = data ? (*dr)[data_off + perm_idx] : perm_idx;
+
+        // if(test_data != out_idxs[out_row_start + idx]) printf("Not same 6\n");
+
+
       }
     }
     out_row += 1;
@@ -195,7 +324,7 @@ __global__ void _CSRRowWiseSampleUniformKernel(
 * @param out_idxs The data array of the output COO (output).
 */
 template<typename IdType, int TILE_SIZE>
-__global__ void _CSRRowWiseSampleUniformReplaceKernel(
+__global__ void _CSRRowWiseSampleUniformReplaceKernelGIDS(
     const uint64_t rand_seed,
     const int64_t num_picks,
     const int64_t num_rows,
@@ -241,10 +370,19 @@ __global__ void _CSRRowWiseSampleUniformReplaceKernel(
 ///////////////////////////// CSR sampling //////////////////////////
 
 template <DGLDeviceType XPU, typename IdType>
-COOMatrix CSRRowWiseSamplingUniform(CSRMatrix mat,
+COOMatrix CSRRowWiseSamplingUniformGIDS(CSRMatrix mat,
                                     IdArray rows,
                                     const int64_t num_picks,
-                                    const bool replace) {
+                                    const bool replace,
+				    void* gids_ptr,
+				    uint64_t* gids_off
+				    ) {
+
+
+    //printf("gids offset IDX0:%llu IDX1:%llu IDX2:%llu\n", gids_off[0], gids_off[1], gids_off[2]);
+
+   BAM_Feature_Store<int64_t>* gids_obj_ptr = (BAM_Feature_Store<int64_t>*) gids_ptr;
+
   const auto& ctx = rows->ctx;
   auto device = runtime::DeviceAPI::Get(ctx);
   cudaStream_t stream = runtime::getCurrentCUDAStream();
@@ -264,26 +402,47 @@ COOMatrix CSRRowWiseSamplingUniform(CSRMatrix mat,
   const IdType* const data = CSRHasData(mat) ?
       static_cast<IdType*>(mat.data->data) : nullptr;
 
+  /*
+  printf("num rows: %llu\n", (unsigned long long) num_rows);
   
-  
+  printf("int_ptr: %p\n", in_ptr);
+  printf("slice row: %p\n", slice_rows);
+  */
 
   // compute degree
+
   IdType * out_deg = static_cast<IdType*>(
       device->AllocWorkspace(ctx, (num_rows + 1) * sizeof(IdType)));
   if (replace) {
     const dim3 block(512);
     const dim3 grid((num_rows + block.x - 1) / block.x);
     CUDA_KERNEL_CALL(
-        _CSRRowWiseSampleDegreeReplaceKernel,
+        _CSRRowWiseSampleDegreeReplaceKernelGIDS,
         grid, block, 0, stream,
         num_picks, num_rows, slice_rows, in_ptr, out_deg);
   } else {
     const dim3 block(512);
     const dim3 grid((num_rows + block.x - 1) / block.x);
+   /*
     CUDA_KERNEL_CALL(
-        _CSRRowWiseSampleDegreeKernel,
+        GIDSTest,
+        grid, block, 0, stream,
+        (array_d_t<int64_t>*) gids_ptr);
+
+      CUDA_CALL(cudaDeviceSynchronize());
+*/
+      CUDA_KERNEL_CALL(
+        _CSRRowWiseSampleDegreeKernelGIDS2,
+        grid, block, 0, stream,
+        (array_d_t<int64_t>*) gids_ptr, num_picks, num_rows, slice_rows, in_ptr, out_deg, gids_off[0]);
+
+      CUDA_CALL(cudaDeviceSynchronize());
+/*
+      CUDA_KERNEL_CALL(
+        _CSRRowWiseSampleDegreeKernelGIDS,
         grid, block, 0, stream,
         num_picks, num_rows, slice_rows, in_ptr, out_deg);
+ */
   }
 
   // fill out_ptr
@@ -327,7 +486,7 @@ COOMatrix CSRRowWiseSamplingUniform(CSRMatrix mat,
     const dim3 block(BLOCK_SIZE);
     const dim3 grid((num_rows + TILE_SIZE - 1) / TILE_SIZE);
     CUDA_KERNEL_CALL(
-        (_CSRRowWiseSampleUniformReplaceKernel<IdType, TILE_SIZE>),
+        (_CSRRowWiseSampleUniformReplaceKernelGIDS<IdType, TILE_SIZE>),
         grid, block, 0, stream,
         random_seed,
         num_picks,
@@ -344,8 +503,9 @@ COOMatrix CSRRowWiseSamplingUniform(CSRMatrix mat,
     const dim3 block(BLOCK_SIZE);
     const dim3 grid((num_rows + TILE_SIZE - 1) / TILE_SIZE);
     CUDA_KERNEL_CALL(
-        (_CSRRowWiseSampleUniformKernel<IdType, TILE_SIZE>),
+        (_CSRRowWiseSampleUniformKernelGIDS<IdType, TILE_SIZE>),
         grid, block, 0, stream,
+        (array_d_t<int64_t>*) gids_ptr,
         random_seed,
         num_picks,
         num_rows,
@@ -356,7 +516,10 @@ COOMatrix CSRRowWiseSamplingUniform(CSRMatrix mat,
         out_ptr,
         out_rows,
         out_cols,
-        out_idxs);
+        out_idxs,
+        gids_off[0],
+        gids_off[1],
+        gids_off[2]);
   }
   device->FreeWorkspace(ctx, out_ptr);
 
@@ -368,14 +531,16 @@ COOMatrix CSRRowWiseSamplingUniform(CSRMatrix mat,
   picked_col = picked_col.CreateView({new_len}, picked_col->dtype);
   picked_idx = picked_idx.CreateView({new_len}, picked_idx->dtype);
 
+
+  //printf("GIDS Sampling done\n");
   return COOMatrix(mat.num_rows, mat.num_cols, picked_row,
       picked_col, picked_idx);
 }
 
-template COOMatrix CSRRowWiseSamplingUniform<kDGLCUDA, int32_t>(
-    CSRMatrix, IdArray, int64_t, bool);
-template COOMatrix CSRRowWiseSamplingUniform<kDGLCUDA, int64_t>(
-    CSRMatrix, IdArray, int64_t, bool);
+template COOMatrix CSRRowWiseSamplingUniformGIDS<kDGLCUDA, int32_t>(
+    CSRMatrix, IdArray, int64_t, bool, void* gids_ptr, uint64_t*);
+template COOMatrix CSRRowWiseSamplingUniformGIDS<kDGLCUDA, int64_t>(
+    CSRMatrix, IdArray, int64_t, bool, void* gids_ptr, uint64_t*);
 
 }  // namespace impl
 }  // namespace aten
