@@ -38,7 +38,7 @@ set(USE_CUDA OFF)
 set(BUILD_CPP_TEST OFF)
 
 # Whether to enable OpenMP.
-set(USE_OPENMP ON)
+set(USE_OPENMP OFF)
 
 # Whether to enable Intel's avx optimized kernel.
 set(USE_AVX ON)
